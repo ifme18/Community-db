@@ -1,6 +1,8 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from werkzeug.security import generate_password_hash
 from .models import db, User, Estate, Event, Post, Comment, Project
+from .mpesa import stk_push
+import os
 
 main_bp = Blueprint('main', __name__)
 
@@ -616,3 +618,28 @@ def api_delete_comment(comment_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to delete comment', 'message': str(e)}), 500
+
+# PAYMENT ROUTES
+@main_bp.route('/api/pay', methods=['POST'])
+def api_pay():
+    data = request.get_json() or {}
+    phone = data.get('phone')
+    amount = data.get('amount')
+    if not phone or not amount:
+        return jsonify({"error": "phone and amount required"}), 400
+    callback_base = os.getenv("MPESA_CALLBACK_BASE")  # e.g. https://<public>/mpesa/stk_callback
+    cb_url = f"{callback_base}/mpesa/stk_callback"
+    try:
+        result = stk_push(phone=phone, amount=int(amount), account_ref="REF123", callback_url=cb_url)
+        return jsonify(result)
+    except Exception as e:
+        current_app.logger.exception("STK push failed")
+        return jsonify({"error": str(e)}), 500
+
+@main_bp.route('/mpesa/stk_callback', methods=['POST'])
+def mpesa_stk_callback():
+    # Safaricom will POST JSON with the result.
+    payload = request.get_json()
+    current_app.logger.info("MPESA STK callback: %s", payload)
+    # TODO: verify payload, update DB transaction record, respond with 200
+    return jsonify({"Result": "Received"}), 200
